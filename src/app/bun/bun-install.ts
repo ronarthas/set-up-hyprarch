@@ -1,4 +1,4 @@
-import { installPackage, commandExists } from "../../utils/install.utils";
+import { installPackage } from "../../utils/install.utils";
 
 export default async function installBun() {
   await installPackage({

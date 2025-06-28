@@ -1,4 +1,6 @@
-import { $ } from "bun";
+/**
+ * Vérifie si sudo est disponible sans mot de passe
+ */ import { $, spawn } from "bun";
 import { log } from "@clack/prompts";
 import * as p from "@clack/prompts";
 
@@ -9,6 +11,7 @@ export interface InstallConfig {
   name: string;
   checkCommand: string;
   installCommand: string;
+  dependencies?: string[]; // Ajout des dépendances
   successMessage?: string;
   skipMessage?: string;
 }
@@ -17,6 +20,7 @@ export interface PackageManagerConfig {
   name: string;
   packageName: string;
   packageManager: "pacman" | "paru" | "apt" | "yum" | "dnf";
+  dependencies?: string[]; // Ajout des dépendances
   additionalFlags?: string[];
   successMessage?: string;
 }
@@ -75,8 +79,26 @@ export async function enableSudoCache(): Promise<void> {
 }
 
 /**
- * Vérifie si sudo est disponible sans mot de passe
+ * Exécute une commande de façon interactive avec spawn
  */
+async function runInteractiveCommand(command: string): Promise<void> {
+  const parts = command.split(" ");
+  const cmd = parts[0];
+  const args = parts.slice(1);
+
+  const proc = spawn({
+    cmd: [cmd, ...args],
+    stdin: "inherit", // Permet l'interaction
+    stdout: "inherit", // Affichage temps réel
+    stderr: "inherit", // Erreurs temps réel
+  });
+
+  const exitCode = await proc.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`Command failed with exit code ${exitCode}`);
+  }
+}
 export async function isSudoAvailable(): Promise<boolean> {
   try {
     await $`sudo -n true`.quiet();
@@ -127,6 +149,54 @@ export async function isPackageInstalled(
 }
 
 /**
+ * Résout l'ordre d'installation selon les dépendances (tri topologique)
+ */
+export function resolveDependencyOrder(
+  packages: Array<{ name: string; dependencies?: string[] }>,
+): string[] {
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const result: string[] = [];
+
+  // Créer un map pour un accès rapide
+  const packageMap = new Map(
+    packages.map((pkg) => [pkg.name.toLowerCase(), pkg]),
+  );
+
+  function visit(packageName: string): void {
+    const normalizedName = packageName.toLowerCase();
+
+    if (visiting.has(normalizedName)) {
+      throw new Error(`Circular dependency detected involving: ${packageName}`);
+    }
+
+    if (visited.has(normalizedName)) {
+      return;
+    }
+
+    visiting.add(normalizedName);
+
+    const pkg = packageMap.get(normalizedName);
+    if (pkg && pkg.dependencies) {
+      for (const dep of pkg.dependencies) {
+        visit(dep);
+      }
+    }
+
+    visiting.delete(normalizedName);
+    visited.add(normalizedName);
+    result.push(packageName);
+  }
+
+  // Visiter tous les packages
+  for (const pkg of packages) {
+    visit(pkg.name);
+  }
+
+  return result;
+}
+
+/**
  * Fonction générique d'installation idempotente
  */
 export async function installPackage(config: InstallConfig): Promise<void> {
@@ -152,13 +222,8 @@ export async function installPackage(config: InstallConfig): Promise<void> {
 
     log.info(`Installing ${name}...`);
 
-    // Exécuter la commande avec logs détaillés
-    const result = await $`${installCommand.split(" ")}`;
-
-    // Afficher les logs de sortie si disponibles
-    if (result.stdout) {
-      log.info(`Output: ${result.stdout.toString().trim()}`);
-    }
+    // Exécuter la commande de façon interactive
+    await runInteractiveCommand(installCommand);
 
     log.success(successMessage || `${name} installed successfully 👌🏼`);
   } catch (err) {
@@ -206,13 +271,8 @@ export async function installSystemPackage(
 
     log.info(`Installing ${name} via ${packageManager}...`);
 
-    // Exécuter avec logs détaillés
-    const result = await $`${installCmd.split(" ")}`;
-
-    // Afficher les logs si disponibles
-    if (result.stdout) {
-      log.info(`Output: ${result.stdout.toString().trim()}`);
-    }
+    // Exécuter avec support d'interaction
+    await runInteractiveCommand(installCmd);
 
     log.success(successMessage || `${name} installed successfully 👌🏼`);
   } catch (err) {
@@ -220,7 +280,6 @@ export async function installSystemPackage(
     if (err instanceof $.ShellError) {
       if (err.stdout) log.error(`stdout: ${err.stdout.toString()}`);
       if (err.stderr) log.error(`stderr: ${err.stderr.toString()}`);
-      log.error(`exit code: ${err.exitCode}`);
     }
     throw err;
   }

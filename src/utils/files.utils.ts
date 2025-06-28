@@ -1,6 +1,6 @@
-// Fonction utilitaire pour la manipulation de fichier / dossier
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import color from "picocolors"; // Importer picocolors
 
 interface Option {
   value: string;
@@ -8,23 +8,18 @@ interface Option {
   hint?: string;
 }
 
-/**
- * Génère un tableau d'options à partir des dossiers d'un chemin donné
- * @param path - Le chemin du répertoire à analyser
- * @returns Un tableau d'objets Option
- */
 export async function generateOptionsFromFolders(
   path: string,
 ): Promise<Option[]> {
   try {
-    const entries = await readdir(path);
+    const resolvedPath = resolve(path);
+    const entries = await readdir(resolvedPath);
     const options: Option[] = [];
 
     for (const entry of entries) {
-      const entryPath = join(path, entry);
+      const entryPath = join(resolvedPath, entry);
       const entryStat = await stat(entryPath);
 
-      // Vérifier si c'est un dossier
       if (entryStat.isDirectory()) {
         const option: Option = {
           value: `${entry}-install.ts`,
@@ -38,7 +33,11 @@ export async function generateOptionsFromFolders(
           if (await hintFile.exists()) {
             const hintText = await hintFile.text();
             if (hintText.trim()) {
-              option.hint = hintText.trim();
+              // 🎨 Colorer le hint en gris/cyan/vert selon tes préférences
+              option.hint = color.gray(hintText.trim()); // Gris discret
+              // option.hint = color.cyan(hintText.trim());      // Cyan moderne
+              // option.hint = color.green(hintText.trim());     // Vert
+              // option.hint = color.dim(hintText.trim());       // Atténué
             }
           }
         } catch {
@@ -52,25 +51,13 @@ export async function generateOptionsFromFolders(
     return options;
   } catch (error) {
     throw new Error(
-      `Erreur lors de la lecture du répertoire ${path}: ${error}`,
+      `Erreur lors de la lecture du répertoire ${resolvedPath}: ${error}`,
     );
   }
 }
 
-/**
- * Formate le nom du dossier en label avec première lettre majuscule
- * et remplace les tirets par des espaces
- * @param folderName - Le nom du dossier
- * @returns Le label formaté
- */
 function formatLabel(folderName: string): string {
   return folderName
     .replace(/-/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
-
-// Exemple d'utilisation
-/*
-const options = await generateOptionsFromFolders('./templates');
-console.log(options);
-*/
